@@ -54,7 +54,9 @@ async function http<T>(path: string, init: RequestInit & { json?: unknown } = {}
 
   if (response.status === 401) {
     tokenStore.clear();
-    throw new Error("Sesión expirada. Vuelve a iniciar sesión.");
+    if (path !== "/auth/login") {
+      throw new Error("Sesión expirada. Vuelve a iniciar sesión.");
+    }
   }
   if (!response.ok) {
     let message = `Error ${response.status}`;
