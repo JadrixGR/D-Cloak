@@ -20,7 +20,7 @@ services:
       - key: PROFILE_DATA_KEY
         generateValue: true
       - key: ADMIN_EMAIL
-        value: admin@novashield.local
+        value: admin@novashield.app
       - key: ADMIN_NAME
         value: Nova Admin
       - key: ADMIN_INITIAL_PASSWORD

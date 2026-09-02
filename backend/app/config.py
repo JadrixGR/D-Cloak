@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     profile_data_key: str | None = None
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
     default_server_ip: str = "127.0.0.1"
-    admin_email: str = "admin@novashield.local"
+    admin_email: str = "admin@novashield.app"
     admin_name: str = "Nova Admin"
     admin_initial_password: str | None = None
     allow_private_proxies: bool = False

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from app.config import Settings
+from app.main import create_app
+
 
 def create_profile(client: TestClient, headers: dict[str, str], name: str = "QA aislado"):
     return client.post(
@@ -112,3 +115,25 @@ def test_password_change_revokes_previous_token(client: TestClient, admin_header
         json={"email": "admin@example.com", "password": "A-New-Admin-Password!456"},
     )
     assert login.status_code == 200
+
+
+def test_legacy_local_admin_email_is_normalized(tmp_path):
+    settings = Settings(
+        environment="test",
+        database_url=f"sqlite:///{tmp_path / 'legacy-admin.db'}",
+        jwt_secret="test-secret-that-is-long-enough-for-tests",
+        profile_data_key="independent-test-vault-key",
+        admin_email="admin@novashield.local",
+        admin_initial_password="AdminPassword!123",
+        default_server_ip="203.0.113.24",
+        auto_create_schema=True,
+    )
+
+    with TestClient(create_app(settings)) as test_client:
+        login = test_client.post(
+            "/api/auth/login",
+            json={"email": "admin@novashield.app", "password": "AdminPassword!123"},
+        )
+
+    assert login.status_code == 200
+    assert login.json()["user"]["email"] == "admin@novashield.app"

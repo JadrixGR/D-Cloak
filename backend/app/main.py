@@ -16,6 +16,15 @@ from .security import hash_password
 from .services import get_platform_settings
 
 
+LEGACY_ADMIN_EMAIL = "admin@novashield.local"
+DEFAULT_ADMIN_EMAIL = "admin@novashield.app"
+
+
+def normalized_admin_email(configured_email: str) -> str:
+    email = configured_email.strip().lower()
+    return DEFAULT_ADMIN_EMAIL if email == LEGACY_ADMIN_EMAIL else email
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     config = settings or get_settings()
     database = Database(config)
@@ -27,15 +36,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with database.session_factory() as db:
             get_platform_settings(db, config)
             existing_admin = db.scalar(select(User).where(User.role == "admin"))
+            admin_email = normalized_admin_email(config.admin_email)
             if existing_admin is None and config.admin_initial_password:
                 db.add(
                     User(
-                        email=config.admin_email.lower(),
+                        email=admin_email,
                         name=config.admin_name,
                         role="admin",
                         password_hash=hash_password(config.admin_initial_password),
                     )
                 )
+                db.commit()
+            elif existing_admin is not None and existing_admin.email.lower() == LEGACY_ADMIN_EMAIL:
+                # Preserve the existing password and account while repairing the
+                # legacy .local address rejected by Pydantic's EmailStr validator.
+                existing_admin.email = admin_email
                 db.commit()
         yield
         database.dispose()
