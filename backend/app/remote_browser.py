@@ -173,8 +173,9 @@ class BrowserbaseRemoteBrowser:
         url = payload.get("debuggerFullscreenUrl")
         if not isinstance(url, str) or not _is_https_url(url):
             raise RemoteBrowserError("El proveedor no devolvió una URL segura para abrir el navegador")
-        separator = "&" if "?" in url else "?"
-        return f"{url}{separator}navbar=false"
+        # Keep Browserbase's navigation bar visible. The remote browser starts on
+        # about:blank, so hiding it leaves web users with no way to enter a URL.
+        return url
 
     def close(self, session_id: str) -> None:
         self._request("POST", f"/sessions/{session_id}", json={"status": "REQUEST_RELEASE"})

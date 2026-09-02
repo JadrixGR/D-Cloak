@@ -232,4 +232,4 @@ def test_browserbase_launch_uses_persistent_context_and_profile_proxy(monkeypatc
             "password": "proxy-pass",
         }
     ]
-    assert launch.live_view_url.endswith("?navbar=false")
+    assert launch.live_view_url == "https://live.browserbase.test/session_real"
