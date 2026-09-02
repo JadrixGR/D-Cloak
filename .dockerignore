@@ -1,0 +1,12 @@
+.git
+.workspace
+.lovable
+.github
+node_modules
+.output
+dist
+backend/.env
+backend/.pytest_cache
+backend/**/__pycache__
+*.db
+*.log
