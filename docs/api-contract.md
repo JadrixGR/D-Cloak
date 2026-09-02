@@ -57,8 +57,8 @@ Un `401` provoca cierre de sesión automático en el cliente.
 | POST | `/api/profiles` | `ProfileInput` → `Profile` |
 | PATCH | `/api/profiles/{id}` | `ProfileInput` → `Profile` |
 | DELETE | `/api/profiles/{id}` | `204` |
-| POST | `/api/profiles/{id}/start` | Abre una sesión lógica aislada → `Profile` |
-| POST | `/api/profiles/{id}/stop` | Pausa la sesión → `Profile` |
+| POST | `/api/profiles/{id}/start` | Crea o recupera un Chromium remoto → `{ profile, live_view_url, expires_at }` |
+| POST | `/api/profiles/{id}/stop` | Cierra el Chromium y persiste su contexto → `Profile` |
 | GET/PUT/DELETE | `/api/profiles/{id}/storage` | Bóveda cifrada de cookies y `localStorage` |
 | GET | `/api/proxies` | Pool aislado por propietario; admin ve todo |
 | POST | `/api/proxies` | `ProxyInput` → `Proxy` |
@@ -88,3 +88,6 @@ Un `401` provoca cierre de sesión automático en el cliente.
 - El contenedor ejecuta Alembic, sirve el frontend y expone FastAPI bajo `/api`.
 - Variables: `DATABASE_URL`, `JWT_SECRET`, `PROFILE_DATA_KEY`,
   `ADMIN_INITIAL_PASSWORD`, `DEFAULT_SERVER_IP`.
+- Navegador web administrado: `BROWSER_PROVIDER=browserbase`,
+  `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID`, `BROWSERBASE_REGION`
+  y `BROWSER_SESSION_TIMEOUT_SECONDS` (60-21600).

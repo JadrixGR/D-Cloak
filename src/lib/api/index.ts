@@ -2,6 +2,7 @@ import { mockApi } from "./mock";
 import type {
   ActivityEntry,
   AuthSession,
+  BrowserLaunch,
   CreatedUser,
   PlatformSettings,
   Profile,
@@ -110,10 +111,19 @@ export const api = {
       ? mockApi.updateProfile(id, input, actor)
       : http<Profile>(`/profiles/${id}`, { method: "PATCH", json: input }),
 
-  setProfileState: (id: string, action: "start" | "stop", actor: User): Promise<Profile> =>
+  launchProfile: (id: string, actor: User): Promise<BrowserLaunch> =>
     USING_MOCK_BACKEND
-      ? mockApi.setProfileState(id, action, actor)
-      : http<Profile>(`/profiles/${id}/${action}`, { method: "POST" }),
+      ? mockApi.setProfileState(id, "start", actor).then((profile) => ({
+          profile,
+          live_view_url: "about:blank",
+          expires_at: null,
+        }))
+      : http<BrowserLaunch>(`/profiles/${id}/start`, { method: "POST" }),
+
+  stopProfile: (id: string, actor: User): Promise<Profile> =>
+    USING_MOCK_BACKEND
+      ? mockApi.setProfileState(id, "stop", actor)
+      : http<Profile>(`/profiles/${id}/stop`, { method: "POST" }),
 
   deleteProfile: (id: string, actor: User): Promise<void> =>
     USING_MOCK_BACKEND

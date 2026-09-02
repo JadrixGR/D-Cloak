@@ -71,6 +71,7 @@ class Profile(Base):
     use_default_ip: Mapped[bool] = mapped_column(Boolean, default=True)
     effective_ip: Mapped[str] = mapped_column(String(64))
     storage_namespace: Mapped[str] = mapped_column(String(80), unique=True, default=lambda: new_id("vault"))
+    remote_context_id: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True)
     last_session_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -103,7 +104,10 @@ class BrowserSession(Base):
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True, default=lambda: new_id("ss"))
     profile_id: Mapped[str] = mapped_column(ForeignKey("profiles.id", ondelete="CASCADE"), index=True)
+    provider: Mapped[str] = mapped_column(String(24), default="disabled")
+    remote_session_id: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     profile: Mapped[Profile] = relationship(back_populates="sessions")

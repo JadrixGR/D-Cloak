@@ -55,6 +55,13 @@ def accessible_profile(db: Session, profile_id: str, actor: User) -> Profile:
     return profile
 
 
+def accessible_profile_for_update(db: Session, profile_id: str, actor: User) -> Profile:
+    profile = db.scalar(select(Profile).where(Profile.id == profile_id).with_for_update())
+    if profile is None or (actor.role != "admin" and profile.owner_id != actor.id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Perfil no encontrado")
+    return profile
+
+
 def accessible_proxy(db: Session, proxy_id: str, actor: User) -> Proxy:
     proxy = db.get(Proxy, proxy_id)
     if proxy is None or (actor.role != "admin" and proxy.owner_id != actor.id):

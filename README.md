@@ -18,6 +18,24 @@ se integra con una API FastAPI y PostgreSQL en un único despliegue de Render.
 - Protección SSRF en las pruebas de proxy: las redes privadas se bloquean por defecto.
 - Auditoría, estadísticas, límites de concurrencia y migraciones Alembic.
 - Imagen Docker multi-stage y Blueprint `render.yaml` con PostgreSQL.
+- Chromium remoto interactivo en una pestaña web, con Context persistente por perfil.
+
+## Navegador remoto
+
+Configura estas variables privadas en Render para activar Browserbase:
+
+```env
+BROWSER_PROVIDER=browserbase
+BROWSERBASE_API_KEY=...
+BROWSERBASE_PROJECT_ID=...
+BROWSERBASE_REGION=us-east-1
+BROWSER_SESSION_TIMEOUT_SECONDS=3600
+```
+
+Al pulsar **Abrir perfil**, la API crea un Chromium real y devuelve su vista interactiva. Al
+pausarlo, el Context remoto conserva cookies, IndexedDB, `localStorage` y demás datos de sesión.
+Los proxies HTTP probados se aplican de forma individual; sin proxy se usa la salida de red del
+proveedor de navegador.
 
 ## Desarrollo local
 

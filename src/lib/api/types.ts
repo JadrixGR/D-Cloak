@@ -57,6 +57,12 @@ export type ProfileInput = {
   proxy_id: string | null;
 };
 
+export type BrowserLaunch = {
+  profile: Profile;
+  live_view_url: string;
+  expires_at: string | null;
+};
+
 export type ProxyInput = {
   label: string;
   type: ProxyType;

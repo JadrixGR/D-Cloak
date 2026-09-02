@@ -17,6 +17,7 @@ def client(tmp_path):
         admin_email="admin@example.com",
         admin_initial_password="AdminPassword!123",
         default_server_ip="203.0.113.24",
+        browser_provider="memory",
         auto_create_schema=True,
     )
     with TestClient(create_app(settings)) as test_client:

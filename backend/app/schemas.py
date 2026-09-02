@@ -117,6 +117,12 @@ class ProfileOut(BaseModel):
     created_at: datetime
 
 
+class BrowserLaunchOut(BaseModel):
+    profile: ProfileOut
+    live_view_url: str
+    expires_at: datetime | None
+
+
 class BrowserCookie(BaseModel):
     name: str = Field(min_length=1, max_length=256)
     value: str = Field(max_length=8192)

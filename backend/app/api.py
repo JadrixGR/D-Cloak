@@ -14,6 +14,7 @@ from .models import Activity, BrowserSession, PlatformSettings, Profile, Profile
 from .schemas import (
     ActivityOut,
     AuthSession,
+    BrowserLaunchOut,
     LoginInput,
     PasswordChange,
     ProfileInput,
@@ -29,9 +30,11 @@ from .schemas import (
     UserOut,
     UserPatch,
 )
+from .remote_browser import RemoteBrowserError, RemoteProxy, get_remote_browser
 from .security import VaultCipher, create_access_token, hash_password, temporary_password, verify_password
 from .services import (
     accessible_profile,
+    accessible_profile_for_update,
     accessible_proxy,
     decrypt_proxy_password,
     get_platform_settings,
@@ -105,6 +108,132 @@ def _network_for_profile(
     return proxy.id, proxy.detected_ip or "sin resolver"
 
 
+def _active_browser_session(db: DbSession, profile: Profile) -> BrowserSession | None:
+    return db.scalar(
+        select(BrowserSession)
+        .where(BrowserSession.profile_id == profile.id, BrowserSession.ended_at.is_(None))
+        .order_by(BrowserSession.started_at.desc())
+    )
+
+
+def _remote_proxy(
+    db: DbSession,
+    profile: Profile,
+    current_user: User,
+    settings: Settings,
+) -> RemoteProxy | None:
+    if not profile.proxy_id:
+        return None
+    proxy = accessible_proxy(db, profile.proxy_id, current_user)
+    if not proxy.healthy or not proxy.detected_ip:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Prueba el proxy asignado antes de abrir el perfil",
+        )
+    return RemoteProxy(
+        scheme=proxy.type,
+        host=proxy.host,
+        port=proxy.port,
+        username=proxy.username,
+        password=decrypt_proxy_password(proxy, VaultCipher(settings)),
+    )
+
+
+def _launch_remote_profile(
+    db: DbSession,
+    profile: Profile,
+    current_user: User,
+    settings: Settings,
+) -> BrowserLaunchOut:
+    try:
+        remote = get_remote_browser(settings)
+    except RemoteBrowserError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+    active_session = _active_browser_session(db, profile)
+    if active_session and active_session.remote_session_id:
+        try:
+            live_view_url = remote.live_view(active_session.remote_session_id)
+            profile.status = "running"
+            db.commit()
+            return BrowserLaunchOut(
+                profile=profile_out(db, profile),
+                live_view_url=live_view_url,
+                expires_at=active_session.expires_at,
+            )
+        except RemoteBrowserError:
+            active_session.ended_at = datetime.now(timezone.utc)
+            profile.status = "stopped"
+            db.flush()
+    elif active_session:
+        # Close legacy logical sessions that never had a real remote browser.
+        active_session.ended_at = datetime.now(timezone.utc)
+        profile.status = "stopped"
+        db.flush()
+
+    platform = get_platform_settings(db, settings)
+    running = db.scalar(select(func.count(Profile.id)).where(Profile.status == "running")) or 0
+    if running >= platform.max_concurrent_profiles:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Se alcanzó el límite de perfiles concurrentes",
+        )
+
+    proxy = _remote_proxy(db, profile, current_user, settings)
+    assigned_proxy = db.get(Proxy, profile.proxy_id) if profile.proxy_id else None
+    profile.effective_ip = (
+        assigned_proxy.detected_ip
+        if assigned_proxy and assigned_proxy.detected_ip
+        else platform.default_server_ip
+    )
+
+    if not profile.remote_context_id:
+        try:
+            profile.remote_context_id = remote.create_context()
+            db.flush()
+        except RemoteBrowserError as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    try:
+        launch = remote.launch(
+            context_id=profile.remote_context_id,
+            profile_id=profile.id,
+            owner_id=profile.owner_id,
+            mobile=profile.os == "Android 14",
+            proxy=proxy,
+        )
+    except RemoteBrowserError as exc:
+        profile.status = "error"
+        record_activity(db, current_user, "profile.start", profile.name, str(exc), "error")
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    profile.status = "running"
+    profile.last_session_at = datetime.now(timezone.utc)
+    db.add(
+        BrowserSession(
+            profile_id=profile.id,
+            provider=remote.provider,
+            remote_session_id=launch.session_id,
+            started_at=profile.last_session_at,
+            expires_at=launch.expires_at,
+        )
+    )
+    record_activity(
+        db,
+        current_user,
+        "profile.start",
+        profile.name,
+        f"Navegador remoto abierto · salida {profile.effective_ip}",
+    )
+    db.commit()
+    return BrowserLaunchOut(
+        profile=profile_out(db, profile),
+        live_view_url=launch.live_view_url,
+        expires_at=launch.expires_at,
+    )
+
+
 @router.post("/profiles", response_model=ProfileOut, status_code=status.HTTP_201_CREATED)
 def create_profile(
     payload: ProfileInput,
@@ -122,7 +251,7 @@ def create_profile(
     profile = Profile(
         owner_id=current_user.id,
         name=payload.name.strip(),
-        status="running" if should_start else "stopped",
+        status="stopped",
         os=payload.os,
         timezone=payload.timezone,
         locale=payload.locale,
@@ -134,9 +263,6 @@ def create_profile(
     db.flush()
     cipher = VaultCipher(settings)
     db.add(ProfileVault(profile_id=profile.id, encrypted_payload=cipher.encrypt_json({"cookies": [], "local_storage": {}})))
-    if should_start:
-        profile.last_session_at = datetime.now(timezone.utc)
-        db.add(BrowserSession(profile_id=profile.id, started_at=profile.last_session_at))
     record_activity(
         db,
         current_user,
@@ -146,6 +272,8 @@ def create_profile(
     )
     db.commit()
     db.refresh(profile)
+    if should_start:
+        return _launch_remote_profile(db, profile, current_user, settings).profile
     return profile_out(db, profile)
 
 
@@ -160,6 +288,11 @@ def update_profile(
     profile = accessible_profile(db, profile_id, current_user)
     platform = get_platform_settings(db, settings)
     proxy_id, effective_ip = _network_for_profile(db, current_user, payload, platform)
+    if profile.status == "running" and proxy_id != profile.proxy_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Pausa el perfil antes de cambiar su salida de red",
+        )
     profile.name = payload.name.strip()
     profile.os = payload.os
     profile.timezone = payload.timezone
@@ -173,9 +306,24 @@ def update_profile(
 
 
 @router.delete("/profiles/{profile_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_profile(profile_id: str, db: DbSession, current_user: CurrentUser) -> Response:
+def delete_profile(
+    profile_id: str,
+    db: DbSession,
+    current_user: CurrentUser,
+    settings: Annotated[Settings, Depends(get_app_settings)],
+) -> Response:
     profile = accessible_profile(db, profile_id, current_user)
     name = profile.name
+    active_session = _active_browser_session(db, profile)
+    if profile.remote_context_id or (active_session and active_session.remote_session_id):
+        try:
+            remote = get_remote_browser(settings)
+            if active_session and active_session.remote_session_id:
+                remote.close(active_session.remote_session_id)
+            if profile.remote_context_id:
+                remote.delete_context(profile.remote_context_id)
+        except RemoteBrowserError as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     db.delete(profile)
     record_activity(
         db,
@@ -189,45 +337,32 @@ def delete_profile(profile_id: str, db: DbSession, current_user: CurrentUser) ->
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post("/profiles/{profile_id}/start", response_model=ProfileOut)
+@router.post("/profiles/{profile_id}/start", response_model=BrowserLaunchOut)
 def start_profile(
     profile_id: str,
     db: DbSession,
     current_user: CurrentUser,
     settings: Annotated[Settings, Depends(get_app_settings)],
-) -> ProfileOut:
-    profile = accessible_profile(db, profile_id, current_user)
-    if profile.status == "running":
-        return profile_out(db, profile)
-    platform = get_platform_settings(db, settings)
-    running = db.scalar(select(func.count(Profile.id)).where(Profile.status == "running")) or 0
-    if running >= platform.max_concurrent_profiles:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Se alcanzó el límite de perfiles concurrentes")
-    if profile.proxy_id:
-        proxy = accessible_proxy(db, profile.proxy_id, current_user)
-        if not proxy.healthy or not proxy.detected_ip:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Prueba el proxy asignado antes de iniciar")
-        profile.effective_ip = proxy.detected_ip
-    else:
-        profile.effective_ip = platform.default_server_ip
-
-    profile.status = "running"
-    profile.last_session_at = datetime.now(timezone.utc)
-    db.add(BrowserSession(profile_id=profile.id, started_at=profile.last_session_at))
-    record_activity(db, current_user, "profile.start", profile.name, f"Sesión aislada iniciada en {profile.effective_ip}")
-    db.commit()
-    return profile_out(db, profile)
+) -> BrowserLaunchOut:
+    profile = accessible_profile_for_update(db, profile_id, current_user)
+    return _launch_remote_profile(db, profile, current_user, settings)
 
 
 @router.post("/profiles/{profile_id}/stop", response_model=ProfileOut)
-def stop_profile(profile_id: str, db: DbSession, current_user: CurrentUser) -> ProfileOut:
-    profile = accessible_profile(db, profile_id, current_user)
+def stop_profile(
+    profile_id: str,
+    db: DbSession,
+    current_user: CurrentUser,
+    settings: Annotated[Settings, Depends(get_app_settings)],
+) -> ProfileOut:
+    profile = accessible_profile_for_update(db, profile_id, current_user)
+    active_session = _active_browser_session(db, profile)
+    if active_session and active_session.remote_session_id:
+        try:
+            get_remote_browser(settings).close(active_session.remote_session_id)
+        except RemoteBrowserError as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     profile.status = "paused"
-    active_session = db.scalar(
-        select(BrowserSession)
-        .where(BrowserSession.profile_id == profile.id, BrowserSession.ended_at.is_(None))
-        .order_by(BrowserSession.started_at.desc())
-    )
     if active_session:
         active_session.ended_at = datetime.now(timezone.utc)
     record_activity(db, current_user, "profile.stop", profile.name, "Sesión aislada pausada", "warn")

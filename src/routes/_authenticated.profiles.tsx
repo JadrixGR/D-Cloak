@@ -1,6 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Globe, Loader2, Pause, Play, Plus, Search, Settings2, Trash2 } from "lucide-react";
+import {
+  ExternalLink,
+  Globe,
+  Loader2,
+  Pause,
+  Play,
+  Plus,
+  Search,
+  Settings2,
+  Trash2,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -96,16 +106,24 @@ function ProfilesPage() {
     void qc.invalidateQueries({ queryKey: ["proxies"] });
   };
 
-  const stateMutation = useMutation({
-    mutationFn: ({ id, action }: { id: string; action: "start" | "stop" }) =>
-      api.setProfileState(id, action, user!),
-    onSuccess: (profile, vars) => {
+  const launchMutation = useMutation({
+    mutationFn: ({ id }: { id: string; tab: Window }) => api.launchProfile(id, user!),
+    onSuccess: (launch, vars) => {
       invalidate();
-      toast.success(
-        vars.action === "start"
-          ? `${profile.name} iniciado en ${profile.effective_ip}`
-          : `${profile.name} pausado`,
-      );
+      vars.tab.location.replace(launch.live_view_url);
+      toast.success(`${launch.profile.name} abierto en una pestaña nueva`);
+    },
+    onError: (error: Error, vars) => {
+      vars.tab.close();
+      toast.error(error.message);
+    },
+  });
+
+  const stopMutation = useMutation({
+    mutationFn: (id: string) => api.stopProfile(id, user!),
+    onSuccess: (profile) => {
+      invalidate();
+      toast.success(`${profile.name} pausado y guardado`);
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -167,6 +185,16 @@ function ProfilesPage() {
       proxy_id: profile.proxy_id,
     });
     setSheetOpen(true);
+  }
+
+  function openRemoteProfile(profile: Profile) {
+    const tab = window.open("about:blank", "_blank");
+    if (!tab) {
+      toast.error("Permite las ventanas emergentes para abrir el navegador remoto");
+      return;
+    }
+    tab.opener = null;
+    launchMutation.mutate({ id: profile.id, tab });
   }
 
   const proxies = proxiesQuery.data ?? [];
@@ -241,7 +269,8 @@ function ProfilesPage() {
                 {visible.map((profile) => {
                   const proxy = proxies.find((p) => p.id === profile.proxy_id);
                   const busy =
-                    stateMutation.isPending && stateMutation.variables?.id === profile.id;
+                    (launchMutation.isPending && launchMutation.variables?.id === profile.id) ||
+                    (stopMutation.isPending && stopMutation.variables === profile.id);
                   return (
                     <tr key={profile.id} className="transition-colors hover:bg-surface-raised/50">
                       <td className="px-4 py-3">
@@ -292,8 +321,8 @@ function ProfilesPage() {
                         <RowActions
                           profile={profile}
                           busy={busy}
-                          onStart={() => stateMutation.mutate({ id: profile.id, action: "start" })}
-                          onStop={() => stateMutation.mutate({ id: profile.id, action: "stop" })}
+                          onStart={() => openRemoteProfile(profile)}
+                          onStop={() => stopMutation.mutate(profile.id)}
                           onEdit={() => openEdit(profile)}
                           onDelete={() => setToDelete(profile)}
                         />
@@ -309,7 +338,9 @@ function ProfilesPage() {
           <div className="grid gap-3 lg:hidden">
             {visible.map((profile) => {
               const proxy = proxies.find((p) => p.id === profile.proxy_id);
-              const busy = stateMutation.isPending && stateMutation.variables?.id === profile.id;
+              const busy =
+                (launchMutation.isPending && launchMutation.variables?.id === profile.id) ||
+                (stopMutation.isPending && stopMutation.variables === profile.id);
               return (
                 <div key={profile.id} className="panel space-y-3 p-4">
                   <div className="flex items-start justify-between gap-3">
@@ -334,8 +365,8 @@ function ProfilesPage() {
                   <RowActions
                     profile={profile}
                     busy={busy}
-                    onStart={() => stateMutation.mutate({ id: profile.id, action: "start" })}
-                    onStop={() => stateMutation.mutate({ id: profile.id, action: "stop" })}
+                    onStart={() => openRemoteProfile(profile)}
+                    onStop={() => stopMutation.mutate(profile.id)}
                     onEdit={() => openEdit(profile)}
                     onDelete={() => setToDelete(profile)}
                   />
@@ -509,14 +540,24 @@ function RowActions({
   return (
     <div className="flex items-center justify-end gap-1.5">
       {running ? (
-        <Button variant="outline" size="sm" onClick={onStop} disabled={busy}>
-          {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Pause className="size-3.5" />}
-          Pausar
-        </Button>
+        <>
+          <Button size="sm" onClick={onStart} disabled={busy}>
+            {busy ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <ExternalLink className="size-3.5" />
+            )}
+            Abrir
+          </Button>
+          <Button variant="outline" size="sm" onClick={onStop} disabled={busy}>
+            <Pause className="size-3.5" />
+            Pausar
+          </Button>
+        </>
       ) : (
         <Button size="sm" onClick={onStart} disabled={busy}>
           {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-          Iniciar
+          Abrir perfil
         </Button>
       )}
       <Button variant="ghost" size="icon" onClick={onEdit} aria-label="Configurar perfil">
